@@ -1,6 +1,13 @@
 import { NextResponse } from 'next/server';
 import pool from '@/lib/db';
 
+const CMCC_PREFIXES = "'134','135','136','137','138','139','147','148','150','151','152','157','158','159','172','178','182','183','184','187','188','195','197','198'";
+const CUCC_PREFIXES = "'130','131','132','145','146','155','156','166','167','171','175','176','185','186','196'";
+const CTCC_PREFIXES = "'133','149','153','173','174','177','180','181','189','190','191','193','199'";
+
+const calcRate = (succ: number, total: number) =>
+  total > 0 ? `${((succ / total) * 100).toFixed(2)}%` : '0.00%';
+
 export async function GET(request: Request) {
   const start = Date.now();
   let conn: any;
@@ -34,7 +41,17 @@ export async function GET(request: Request) {
     }
 
     const whereSql = conditions.join(' AND ');
-
+    // 1. 查询聚合后的总工单数 & 全局总发送量
+    const [countAndNumRows]: any = await conn.query(
+      `
+        SELECT
+          COUNT(DISTINCT t.send_msg_id) AS total,
+          COALESCE(SUM(t.real_num), 0) AS globalTotalNum
+        FROM yx_user_send_task_cache t
+        WHERE ${whereSql}
+      `,
+      params
+    );
     // 1. 查询聚合后的总记录数（有多少个不同的工单名称）
     const [countRows]: any = await conn.query(
       `
@@ -45,6 +62,57 @@ export async function GET(request: Request) {
       params
     );
     const total = Number(countRows[0]?.total || 0);
+    const globalTotalNum = Number(countAndNumRows[0]?.globalTotalNum || 0);
+    // 2. 查询当前筛选条件下的全局回执成功数（跨所有匹配工单，不限于当前页）
+    let summary = {
+      cmccSuccess: 0,
+      cmccRate: '0.00%',
+      cuccSuccess: 0,
+      cuccRate: '0.00%',
+      ctccSuccess: 0,
+      ctccRate: '0.00%',
+      totalSuccess: 0,
+      totalRate: '0.00%',
+    };
+
+    if (total > 0) {
+      const [globalReceiptRows]: any = await conn.query(
+        `
+          SELECT
+            COALESCE(SUM(CASE WHEN r.status_message = 'DELIVRD' THEN 1 ELSE 0 END), 0) AS totalSuccess,
+            COALESCE(SUM(CASE WHEN LEFT(r.mobile, 3) IN (${CMCC_PREFIXES}) AND r.status_message = 'DELIVRD' THEN 1 ELSE 0 END), 0) AS cmccSuccess,
+            COALESCE(SUM(CASE WHEN LEFT(r.mobile, 3) IN (${CMCC_PREFIXES}) THEN 1 ELSE 0 END), 0) AS cmccTotal,
+            COALESCE(SUM(CASE WHEN LEFT(r.mobile, 3) IN (${CUCC_PREFIXES}) AND r.status_message = 'DELIVRD' THEN 1 ELSE 0 END), 0) AS cuccSuccess,
+            COALESCE(SUM(CASE WHEN LEFT(r.mobile, 3) IN (${CUCC_PREFIXES}) THEN 1 ELSE 0 END), 0) AS cuccTotal,
+            COALESCE(SUM(CASE WHEN LEFT(r.mobile, 3) IN (${CTCC_PREFIXES}) AND r.status_message = 'DELIVRD' THEN 1 ELSE 0 END), 0) AS ctccSuccess,
+            COALESCE(SUM(CASE WHEN LEFT(r.mobile, 3) IN (${CTCC_PREFIXES}) THEN 1 ELSE 0 END), 0) AS ctccTotal
+          FROM yx_user_send_task_cache t
+          JOIN yx_send_task_receipt r ON t.task_no = r.task_no
+          WHERE ${whereSql} AND r.delete_time = 0
+        `,
+        params
+      );
+
+      const g = globalReceiptRows[0] || {};
+      const cmccSuccess = Number(g.cmccSuccess || 0);
+      const cmccTotal = Number(g.cmccTotal || 0);
+      const cuccSuccess = Number(g.cuccSuccess || 0);
+      const cuccTotal = Number(g.cuccTotal || 0);
+      const ctccSuccess = Number(g.ctccSuccess || 0);
+      const ctccTotal = Number(g.ctccTotal || 0);
+      const totalSuccess = Number(g.totalSuccess || 0);
+
+      summary = {
+        cmccSuccess,
+        cmccRate: calcRate(cmccSuccess, cmccTotal),
+        cuccSuccess,
+        cuccRate: calcRate(cuccSuccess, cuccTotal),
+        ctccSuccess,
+        ctccRate: calcRate(ctccSuccess, ctccTotal),
+        totalSuccess,
+        totalRate: calcRate(totalSuccess, globalTotalNum),
+      };
+    }
 
     // 2. 按 send_msg_id 聚合查询统计数据
     const [summaryRows]: any = await conn.query(
@@ -139,6 +207,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       success: true,
       data: resultData,
+      summary,
       total,
       page,
       pageSize,

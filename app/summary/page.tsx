@@ -3,6 +3,28 @@
 import React, { useState, useEffect } from 'react';
 import { Search, RefreshCw, BarChart3, ArrowLeft } from 'lucide-react';
 
+interface SummaryStats {
+  cmccSuccess: number;
+  cmccRate: string;
+  cuccSuccess: number;
+  cuccRate: string;
+  ctccSuccess: number;
+  ctccRate: string;
+  totalSuccess: number;
+  totalRate: string;
+}
+
+const initialSummary: SummaryStats = {
+  cmccSuccess: 0,
+  cmccRate: '0.00%',
+  cuccSuccess: 0,
+  cuccRate: '0.00%',
+  ctccSuccess: 0,
+  ctccRate: '0.00%',
+  totalSuccess: 0,
+  totalRate: '0.00%',
+};
+
 // 获取本地今日日期字符串 (YYYY-MM-DD)
 const getTodayStr = () => {
   const now = new Date();
@@ -35,6 +57,7 @@ export default function SmsSummaryPage() {
   const [page, setPage] = useState(1);
   const [pageSize] = useState(50);
   const [loading, setLoading] = useState(false);
+  const [summary, setSummary] = useState<SummaryStats>(initialSummary);
 
   // 2. 页面在客户端挂载后，安全地赋予“今天”及“30天前”的范围限制
   useEffect(() => {
@@ -63,6 +86,7 @@ export default function SmsSummaryPage() {
       const json = await res.json();
       if (json.success) {
         setData(json.data);
+        setSummary(json.summary || initialSummary);
         setTotal(json.total);
         setPage(json.page);
       }
@@ -216,6 +240,33 @@ export default function SmsSummaryPage() {
             </tbody>
           </table>
         </div>
+        {/* 底部成功数汇总卡片 */}
+      <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {[
+          { label: '移动数', count: summary.cmccSuccess, rate: summary.cmccRate },
+          { label: '联通数', count: summary.cuccSuccess, rate: summary.cuccRate },
+          { label: '电信数', count: summary.ctccSuccess, rate: summary.ctccRate },
+          { label: '总数', count: summary.totalSuccess, rate: summary.totalRate },
+        ].map((card) => (
+          <div
+            key={card.label}
+            className="bg-white rounded-xl shadow-sm border border-slate-100 px-5 py-4"
+          >
+            <div className="flex items-center gap-1.5 text-xs text-slate-600">
+              <span>{card.label}</span>
+              <span className="px-1.5 py-0.5 text-[10px] leading-none font-medium bg-slate-600 text-white rounded">
+                成功
+              </span>
+            </div>
+            <div className="mt-2.5 text-lg font-bold text-slate-900 tabular-nums">
+              {Number(card.count || 0).toLocaleString()}
+            </div>
+            <div className="mt-1 text-xs text-slate-500 tabular-nums">
+              到达率 {card.rate}
+            </div>
+          </div>
+        ))}
+      </div>
         {/* 分页控制 */}
         {total > 0 && (
           <div className="px-4 py-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-600">
